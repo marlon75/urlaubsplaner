@@ -1,0 +1,727 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+  <title>Urlaubsplaner</title>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="Urlaub"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="theme-color" content="#111111"/>
+  <link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Crect width='180' height='180' rx='40' fill='%23111111'/%3E%3Crect x='30' y='50' width='120' height='100' rx='12' fill='%231A1A1A' stroke='%233B82F6' stroke-width='4'/%3E%3Crect x='30' y='50' width='120' height='30' rx='12' fill='%233B82F6'/%3E%3Crect x='30' y='68' width='120' height='12' fill='%233B82F6'/%3E%3Ccircle cx='60' cy='40' r='8' fill='%23555555'/%3E%3Ccircle cx='120' cy='40' r='8' fill='%23555555'/%3E%3Crect x='48' y='100' width='16' height='16' rx='4' fill='%233B82F6'/%3E%3Crect x='82' y='100' width='16' height='16' rx='4' fill='%2310B981'/%3E%3Crect x='116' y='100' width='16' height='16' rx='4' fill='%23F59E0B'/%3E%3Crect x='48' y='126' width='16' height='16' rx='4' fill='%23F97316'/%3E%3Crect x='82' y='126' width='16' height='16' rx='4' fill='%238B5CF6'/%3E%3C/svg%3E"/>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+      background: #111111;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      overscroll-behavior: none;
+      touch-action: pan-y;
+    }
+  </style>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script>
+    const firebaseConfig = {
+      apiKey:            "AIzaSyAP2yJQPxUlAUWo1ClNTpBuAzhl0qVaJ_w",
+      authDomain:        "urlaubsplaner-a157a.firebaseapp.com",
+      databaseURL:       "https://urlaubsplaner-a157a-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId:         "urlaubsplaner-a157a",
+      storageBucket:     "urlaubsplaner-a157a.firebasestorage.app",
+      messagingSenderId: "293940098188",
+      appId:             "1:293940098188:web:33b9a3c924e694fbbf77a9"
+    };
+    try {
+      firebase.initializeApp(firebaseConfig);
+      const db = firebase.database();
+      window.__firebase = {
+        listen: (cb) => {
+          db.ref("urlaubsplaner").on("value",
+            snap => cb(snap.val()||{tageAlle:{},nachrichten:[],passwoerter:{}}),
+            err => { console.error("Firebase listen Fehler:", err); }
+          );
+        },
+        save: (data) => db.ref("urlaubsplaner").set(data)
+      };
+      // Verbindung testen bevor ready gefeuert wird
+      db.ref(".info/connected").on("value", snap => {
+        if(snap.val() === true) {
+          console.log("Firebase verbunden!");
+          if(!window.__firebaseReady) {
+            window.__firebaseReady = true;
+            window.dispatchEvent(new Event("firebase-ready"));
+          }
+        }
+      });
+      // Fallback: nach 5s trotzdem starten (offline-Modus)
+      setTimeout(() => {
+        if(!window.__firebaseReady) {
+          console.warn("Firebase Verbindung langsam, starte trotzdem...");
+          window.__firebaseReady = true;
+          window.dispatchEvent(new Event("firebase-ready"));
+        }
+      }, 5000);
+    } catch(e) {
+      console.error("Firebase Init Fehler:", e);
+      window.dispatchEvent(new Event("firebase-ready"));
+    }
+  </script>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+// ── Firebase Mock (In-Memory für Claude Artifact) ────────────
+if (!window.__firebase) {
+  let _data = {tageAlle:{},nachrichten:{},passwoerter:{}};
+  window.__firebase = {
+    listen: (cb) => { setTimeout(() => cb(_data), 100); },
+    save:   (data) => { _data = JSON.parse(JSON.stringify(data)); return Promise.resolve(); }
+  };
+}
+
+// ── Globale CSS-Animationen ───────────────────────────────────
+const styleTag = document.createElement("style");
+styleTag.textContent = `
+  @keyframes pulse-border {
+    0%   { box-shadow: 0 0 0 0px var(--pulse-color); opacity: 1; }
+    50%  { box-shadow: 0 0 0 3px var(--pulse-color); opacity: 0.85; }
+    100% { box-shadow: 0 0 0 0px var(--pulse-color); opacity: 1; }
+  }
+  .pulsing { animation: pulse-border 1.8s ease-in-out infinite; }
+`;
+document.head.appendChild(styleTag);
+
+const { useState, useRef, useEffect, useCallback } = React;
+
+const NAMEN = ["Nils","Sven","Tobias","Michael","Marlon"];
+const ADMIN = "Nils";
+const STANDARD_PW = {Nils:"nils123",Sven:"sven123",Tobias:"tobias123",Michael:"michael123",Marlon:"marlon123"};
+const FARBEN = {Nils:"#3B82F6",Sven:"#10B981",Tobias:"#F59E0B",Michael:"#F97316",Marlon:"#8B5CF6"};
+const MONATE = ["Januar","Februar","März","April","Mai","Juni","Juli","August","September","Oktober","November","Dezember"];
+const WOCHENTAGE = ["Mo","Di","Mi","Do","Fr","Sa","So"];
+
+function getOstersonntag(year) {
+  const a=year%19,b=Math.floor(year/100),c=year%100;
+  const d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25);
+  const g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30;
+  const i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7;
+  const m=Math.floor((a+11*h+22*l)/451);
+  const month=Math.floor((h+l-7*m+114)/31)-1;
+  const day=((h+l-7*m+114)%31)+1;
+  return new Date(year,month,day);
+}
+function addDays(d,n){ const r=new Date(d); r.setDate(r.getDate()+n); return r; }
+function fmtD(d){ return dateKey(d.getFullYear(),d.getMonth(),d.getDate()); }
+
+function getFeiertage(year) {
+  const os = getOstersonntag(year);
+  const ft = {};
+  const add = (d, name) => { ft[fmtD(d)] = name; };
+  add(new Date(year,0,1),   "Neujahr");
+  add(addDays(os,-2),       "Karfreitag");
+  add(os,                   "Ostersonntag");
+  add(addDays(os,1),        "Ostermontag");
+  add(new Date(year,4,1),   "Tag der Arbeit");
+  add(addDays(os,39),       "Christi Himmelfahrt");
+  add(addDays(os,49),       "Pfingstsonntag");
+  add(addDays(os,50),       "Pfingstmontag");
+  add(addDays(os,60),       "Fronleichnam");
+  add(new Date(year,9,3),   "Tag der Deutschen Einheit");
+  add(new Date(year,10,1),  "Allerheiligen");
+  add(new Date(year,11,25), "1. Weihnachtstag");
+  add(new Date(year,11,26), "2. Weihnachtstag");
+  return ft;
+}
+
+function dateKey(y,m,d){ return `${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`; }
+function parseKey(k){ const [y,m,d]=k.split("-").map(Number); return {year:y,month:m-1,day:d}; }
+function formatDate(k){ const {year:y,month:m,day:d}=parseKey(k); return `${String(d).padStart(2,"0")}.${String(m+1).padStart(2,"0")}.${y}`; }
+function isWeekend(y,m,d){ return [0,6].includes(new Date(y,m,d).getDay()); }
+function getDaysInMonth(y,m){ return new Date(y,m+1,0).getDate(); }
+function getFirstDow(y,m){ const d=new Date(y,m,1).getDay(); return d===0?6:d-1; }
+function getRange(kA,kB){
+  if(!kA||!kB) return new Set();
+  const a=parseKey(kA),b=parseKey(kB);
+  const dA=new Date(a.year,a.month,a.day),dB=new Date(b.year,b.month,b.day);
+  const from=dA<=dB?dA:dB,to=dA<=dB?dB:dA,result=new Set(),cur=new Date(from);
+  while(cur<=to){ result.add(dateKey(cur.getFullYear(),cur.getMonth(),cur.getDate())); cur.setDate(cur.getDate()+1); }
+  return result;
+}
+
+async function requestNotificationPermission() {
+  if(!("Notification" in window)) return false;
+  if(Notification.permission==="granted") return true;
+  if(Notification.permission==="denied") return false;
+  const perm = await Notification.requestPermission();
+  return perm==="granted";
+}
+function sendNotification(title, body) {
+  if(Notification.permission==="granted") {
+    new Notification(title, { body });
+  }
+}
+
+const BtnStyle={width:"30px",height:"30px",borderRadius:"7px",background:"#222222",border:"1px solid #333333",color:"#CCCCCC",fontSize:"17px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"};
+
+function PasswortAendern({name,farbe,onSave}){
+  const [neu,setNeu]=useState(""),[ best,setBest]=useState("");
+  const [zeigenN,setZeigenN]=useState(false),[zeigenB,setZeigenB]=useState(false);
+  const [fehler,setFehler]=useState("");
+  const handleSave=()=>{
+    if(neu.length<4){setFehler("Mindestens 4 Zeichen.");return;}
+    if(neu!==best){setFehler("Passwörter stimmen nicht überein.");return;}
+    onSave(neu);
+  };
+  return(
+    <div style={{minHeight:"100vh",background:"#111111",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",padding:"24px"}}>
+      <div style={{width:"100%",maxWidth:"360px"}}>
+        <div style={{background:"#1A1A1A",border:`1px solid ${farbe}66`,borderRadius:"18px",padding:"32px 28px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"12px",marginBottom:"8px"}}>
+            <div style={{width:"44px",height:"44px",borderRadius:"50%",background:farbe+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",fontWeight:800,color:farbe}}>{name[0]}</div>
+            <div><div style={{fontSize:"17px",fontWeight:800,color:"#FFFFFF"}}>Willkommen, {name}!</div><div style={{fontSize:"12px",color:"#666666"}}>Bitte Passwort festlegen</div></div>
+          </div>
+          {[["Neues Passwort",neu,setNeu,zeigenN,setZeigenN],["Bestätigen",best,setBest,zeigenB,setZeigenB]].map(([label,val,setVal,zeigen,setZeigen],i)=>(
+            <div key={i} style={{marginBottom:"14px",marginTop:i===0?"20px":"0"}}>
+              <label style={{fontSize:"12px",color:"#666666",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:"6px"}}>{label}</label>
+              <div style={{position:"relative"}}>
+                <input autoFocus={i===0} type={zeigen?"text":"password"} value={val} onChange={e=>{setVal(e.target.value);setFehler("");}} onKeyDown={e=>e.key==="Enter"&&i===1&&handleSave()} placeholder="••••••••"
+                  style={{width:"100%",padding:"11px 44px 11px 14px",borderRadius:"10px",background:"#222222",border:`1.5px solid ${fehler?"#EF4444":"#333333"}`,color:"#FFFFFF",fontSize:"15px",outline:"none",boxSizing:"border-box"}}/>
+                <button onClick={()=>setZeigen(z=>!z)} style={{position:"absolute",right:"12px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#666666",cursor:"pointer",fontSize:"16px",padding:0}}>{zeigen?"🙈":"👁"}</button>
+              </div>
+            </div>
+          ))}
+          {fehler&&<div style={{color:"#EF4444",fontSize:"12px",marginBottom:"12px",fontWeight:600}}>⚠ {fehler}</div>}
+          <button onClick={handleSave} style={{width:"100%",padding:"12px",borderRadius:"10px",background:`linear-gradient(135deg,${farbe},${farbe}cc)`,border:"none",color:"#fff",fontSize:"15px",fontWeight:700,cursor:"pointer"}}>Speichern & einloggen</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NamensAuswahl({onSelect,nachrichten,passwoerter,onReset}){
+  const [hovered,setHovered]=useState(null);
+  const [gewName,setGewName]=useState(null);
+  const [pw,setPw]=useState(""),[ fehler,setFehler]=useState(false),[zeigen,setZeigen]=useState(false);
+  const [showReset,setShowReset]=useState(false);
+  const [resetPw,setResetPw]=useState(""),[ resetFehler,setResetFehler]=useState(false);
+  const handleReset=()=>{
+    if(resetPw==="reset123"){ onReset(); setShowReset(false); setResetPw(""); setResetFehler(false); }
+    else{ setResetFehler(true); setResetPw(""); }
+  };
+  const handleLogin=()=>{
+    const gespeichert=passwoerter[gewName];
+    const korrekt=gespeichert||STANDARD_PW[gewName];
+    if(pw===korrekt){ onSelect(gewName,!gespeichert); }
+    else{ setFehler(true); setPw(""); }
+  };
+  const farbeGew=gewName?FARBEN[gewName]:"#3B82F6";
+  const ungeleseneNachr = (n) => nachrichten.filter(msg=>
+    n===ADMIN
+      ? !msg.gelesen&&!msg.typ
+      : !msg.gelesen&&(msg.typ==="ablehnung"&&msg.fuer===n||(msg.von===n&&msg.status!=="offen"&&!msg.typ))
+  ).length;
+  if(gewName) return(
+    <div style={{minHeight:"100vh",background:"#111111",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",padding:"24px"}}>
+      <div style={{width:"100%",maxWidth:"340px"}}>
+        <button onClick={()=>{setGewName(null);setPw("");setFehler(false);}} style={{background:"none",border:"none",color:"#666666",fontSize:"13px",cursor:"pointer",marginBottom:"24px",display:"flex",alignItems:"center",gap:"6px",padding:0}}>← Zurück</button>
+        <div style={{background:"#1A1A1A",border:`1px solid ${farbeGew}44`,borderRadius:"18px",padding:"32px 28px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:"14px",marginBottom:"28px"}}>
+            <div style={{width:"48px",height:"48px",borderRadius:"50%",background:farbeGew+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px",fontWeight:800,color:farbeGew}}>{gewName[0]}</div>
+            <div>
+              <div style={{fontSize:"18px",fontWeight:800,color:"#FFFFFF"}}>{gewName}</div>
+              {gewName===ADMIN&&<span style={{fontSize:"10px",background:"rgba(59,130,246,0.2)",color:"#AAAAAA",padding:"1px 7px",borderRadius:"99px",fontWeight:700}}>Admin</span>}
+            </div>
+          </div>
+          <div style={{marginBottom:"16px"}}>
+            <label style={{fontSize:"12px",color:"#666666",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:"8px"}}>Passwort</label>
+            <div style={{position:"relative"}}>
+              <input autoFocus type={zeigen?"text":"password"} value={pw}
+                onChange={e=>{setPw(e.target.value);setFehler(false);}}
+                onKeyDown={e=>e.key==="Enter"&&handleLogin()}
+                placeholder="Passwort eingeben..."
+                style={{width:"100%",padding:"11px 44px 11px 14px",borderRadius:"10px",background:"#222222",border:fehler?"1.5px solid #EF4444":"1.5px solid #333333",color:"#FFFFFF",fontSize:"15px",outline:"none",boxSizing:"border-box"}}/>
+              <button onClick={()=>setZeigen(z=>!z)} style={{position:"absolute",right:"12px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:"#666666",cursor:"pointer",fontSize:"16px",padding:0}}>{zeigen?"🙈":"👁"}</button>
+            </div>
+            {fehler&&<div style={{color:"#EF4444",fontSize:"12px",marginTop:"6px",fontWeight:600}}>⚠ Falsches Passwort</div>}
+          </div>
+          <button onClick={handleLogin} style={{width:"100%",padding:"12px",borderRadius:"10px",background:`linear-gradient(135deg,${farbeGew},${farbeGew}cc)`,border:"none",color:"#fff",fontSize:"15px",fontWeight:700,cursor:"pointer",boxShadow:`0 4px 16px ${farbeGew}44`}}>Anmelden</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{minHeight:"100vh",background:"#111111",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",padding:"24px",position:"relative"}}>
+      <div style={{marginBottom:"12px",fontSize:"48px"}}>📅</div>
+      <h1 style={{color:"#FFFFFF",fontSize:"28px",fontWeight:800,margin:"0 0 6px",letterSpacing:"-0.5px"}}>Urlaubsplaner</h1>
+      <p style={{color:"#666666",fontSize:"15px",margin:"0 0 40px"}}>Wer bist du?</p>
+      <div style={{display:"flex",flexDirection:"column",gap:"12px",width:"100%",maxWidth:"340px"}}>
+        {NAMEN.map(name=>{
+          const farbe=FARBEN[name],istAdmin=name===ADMIN;
+          const ung=ungeleseneNachr(name);
+          return(
+            <button key={name} onClick={()=>setGewName(name)} onMouseEnter={()=>setHovered(name)} onMouseLeave={()=>setHovered(null)}
+              style={{padding:"14px 20px",borderRadius:"14px",border:`2px solid ${farbe}`,background:hovered===name?farbe+"55":farbe+"22",color:farbe,fontSize:"16px",fontWeight:700,cursor:"pointer",transition:"all 0.15s",display:"flex",alignItems:"center",gap:"14px",boxShadow:hovered===name?`0 4px 20px ${farbe}44`:"none"}}>
+              <span style={{width:"38px",height:"38px",borderRadius:"50%",background:hovered===name?farbe:farbe+"44",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"15px",fontWeight:800,color:hovered===name?"#fff":farbe,transition:"all 0.15s",flexShrink:0,position:"relative"}}>
+                {name[0]}
+                {ung>0&&<span style={{position:"absolute",top:"-4px",right:"-4px",width:"16px",height:"16px",borderRadius:"50%",background:"#EF4444",fontSize:"9px",fontWeight:800,color:"#fff",display:"flex",alignItems:"center",justifyContent:"center"}}>{ung}</span>}
+              </span>
+              <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                {name}{istAdmin&&<span style={{fontSize:"10px",background:"rgba(59,130,246,0.2)",color:"#AAAAAA",padding:"1px 7px",borderRadius:"99px",fontWeight:700}}>Admin</span>}
+              </div>
+              {ung>0&&<span style={{fontSize:"11px",color:"#EF4444",fontWeight:700,marginLeft:"auto"}}>{ung} neu</span>}
+            </button>
+          );
+        })}
+      </div>
+      <button onClick={()=>setShowReset(true)} style={{position:"fixed",bottom:"24px",right:"24px",padding:"8px 14px",borderRadius:"10px",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.2)",color:"rgba(239,68,68,0.5)",fontSize:"11px",fontWeight:600,cursor:"pointer"}}
+        onMouseEnter={e=>{e.currentTarget.style.background="rgba(239,68,68,0.15)";e.currentTarget.style.color="#EF4444";}}
+        onMouseLeave={e=>{e.currentTarget.style.background="rgba(239,68,68,0.08)";e.currentTarget.style.color="rgba(239,68,68,0.5)";}}>
+        🗑 Kalender zurücksetzen
+      </button>
+      {showReset&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}} onClick={()=>{setShowReset(false);setResetPw("");setResetFehler(false);}}>
+          <div style={{background:"#1A1A1A",borderRadius:"16px",padding:"28px",border:"1px solid rgba(239,68,68,0.4)",minWidth:"300px",boxShadow:"0 25px 60px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:"17px",fontWeight:800,color:"#FFFFFF",marginBottom:"6px"}}>🗑 Kalender zurücksetzen</div>
+            <div style={{fontSize:"12px",color:"#666666",marginBottom:"20px"}}>Alle Daten werden unwiderruflich gelöscht.</div>
+            <input autoFocus type="password" value={resetPw} onChange={e=>{setResetPw(e.target.value);setResetFehler(false);}} onKeyDown={e=>e.key==="Enter"&&handleReset()} placeholder="Reset-Passwort"
+              style={{width:"100%",padding:"10px 14px",borderRadius:"9px",background:"#222222",border:resetFehler?"1.5px solid #EF4444":"1.5px solid #333333",color:"#FFFFFF",fontSize:"14px",outline:"none",boxSizing:"border-box",marginBottom:"8px"}}/>
+            {resetFehler&&<div style={{color:"#EF4444",fontSize:"12px",marginBottom:"10px",fontWeight:600}}>⚠ Falsches Passwort</div>}
+            <div style={{display:"flex",gap:"10px",marginTop:"12px"}}>
+              <button onClick={()=>{setShowReset(false);setResetPw("");setResetFehler(false);}} style={{flex:1,padding:"10px",borderRadius:"9px",background:"#222222",border:"1px solid #333333",color:"#888888",fontSize:"13px",fontWeight:600,cursor:"pointer"}}>Abbrechen</button>
+              <button onClick={handleReset} style={{flex:1,padding:"10px",borderRadius:"9px",background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",color:"#EF4444",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>Zurücksetzen</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AblehnModalKomponente({modal, onAbbrechen, onBestaetigen}){
+  const [grund, setGrund] = useState("");
+  const textareaRef = useRef(null);
+  useEffect(()=>{
+    setGrund("");
+    if(modal && textareaRef.current){ setTimeout(()=>textareaRef.current&&textareaRef.current.focus(), 50); }
+  },[modal]);
+  if(!modal) return null;
+  const farbe = FARBEN[modal.von] || "#EF4444";
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:400}} onClick={onAbbrechen}>
+      <div style={{background:"#1A1A1A",borderRadius:"16px",padding:"26px",border:"1px solid rgba(239,68,68,0.3)",width:"100%",maxWidth:"400px",boxShadow:"0 25px 60px rgba(0,0,0,0.8)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:"16px",fontWeight:800,color:"#FFFFFF",marginBottom:"4px"}}>✕ Antrag ablehnen</div>
+        <div style={{fontSize:"12px",color:"#666666",marginBottom:"16px"}}>
+          Von <span style={{color:farbe,fontWeight:700}}>{modal.von}</span> — {modal.tage.length} Tag{modal.tage.length!==1?"e":""}
+        </div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:"16px"}}>
+          {modal.tage.map(k=><span key={k} style={{fontSize:"11px",background:"rgba(239,68,68,0.12)",color:"#EF4444",padding:"2px 8px",borderRadius:"6px",fontWeight:600}}>{formatDate(k)}</span>)}
+        </div>
+        <label style={{fontSize:"12px",color:"#666666",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em",display:"block",marginBottom:"8px"}}>Begründung (optional)</label>
+        <textarea ref={textareaRef} value={grund} onChange={e=>setGrund(e.target.value)}
+          placeholder="z.B. Zu viele Kollegen gleichzeitig abwesend..." rows={3}
+          style={{width:"100%",padding:"10px 12px",borderRadius:"9px",background:"#222222",border:"1px solid #444444",color:"#FFFFFF",fontSize:"13px",outline:"none",resize:"vertical",boxSizing:"border-box",fontFamily:"inherit"}}/>
+        <div style={{display:"flex",gap:"10px",marginTop:"16px"}}>
+          <button onClick={onAbbrechen} style={{flex:1,padding:"10px",borderRadius:"9px",background:"#222222",border:"1px solid #333333",color:"#888888",fontSize:"13px",fontWeight:600,cursor:"pointer"}}>Abbrechen</button>
+          <button onClick={()=>onBestaetigen(modal.id, grund)} style={{flex:1,padding:"10px",borderRadius:"9px",background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.4)",color:"#EF4444",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>✕ Ablehnen</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function App(){
+  const [name,setName]=useState(null);
+  const [year,setYear]=useState(new Date().getFullYear());
+  const [tageAlle,setTageAlleRaw]=useState({});
+  const [nachrichten,setNachrichtenRaw]=useState([]);
+  const [passwoerter,setPasswoerterRaw]=useState({});
+  const [view,setView]=useState("kalender");
+  const [showInbox,setShowInbox]=useState(false);
+  const [ablehnModal,setAblehnModal]=useState(null);
+  const [pendingTage,setPendingTage]=useState(new Set());
+  const [mussPasswortAendern,setMussPasswortAendern]=useState(false);
+  const [laden,setLaden]=useState(true);
+  const [fbFehler,setFbFehler]=useState(false);
+  const [speicherStatus,setSpeicherStatus]=useState(null);
+  const [zeigeFeiert,setZeigeFeiert]=useState(true);
+  const [notifErlaubt,setNotifErlaubt]=useState(false);
+
+  const dragStartKey=useRef(null),dragCurrentKey=useRef(null),isDragging=useRef(false);
+  const touchStartKey=useRef(null),touchMoved=useRef(false);
+  const [dragRange,setDragRange]=useState(new Set());
+  const saveTimer=useRef(null);
+  const latestData=useRef({tageAlle:{},nachrichten:[],passwoerter:{}});
+  const prevNachrichtenCount=useRef(0);
+
+  const today=dateKey(new Date().getFullYear(),new Date().getMonth(),new Date().getDate());
+  const farbe=name?FARBEN[name]:"#3B82F6";
+  const istAdmin=name===ADMIN;
+  const ungelesen = istAdmin
+    ? nachrichten.filter(n=>!n.gelesen&&!n.typ).length
+    : nachrichten.filter(n=>!n.gelesen&&(n.typ==="ablehnung"&&n.fuer===name||(n.von===name&&n.status!=="offen"&&!n.typ))).length;
+  const feiertage=getFeiertage(year);
+  const eingNichtGen=new Set(nachrichten.filter(n=>n.von===name&&n.status==="offen"&&!n.typ).flatMap(n=>n.tage));
+  const genTage=new Set(nachrichten.filter(n=>n.von===name&&n.status==="genehmigt"&&!n.typ).flatMap(n=>n.tage));
+  const meineGen=Object.entries(tageAlle).filter(([k,v])=>parseKey(k).year===year&&v.includes(name)&&genTage.has(k)).length;
+
+  useEffect(()=>{ if(name===ADMIN){ requestNotificationPermission().then(ok=>setNotifErlaubt(ok)); } },[name]);
+
+  useEffect(()=>{
+    if(!istAdmin||!notifErlaubt) return;
+    const offene=nachrichten.filter(n=>n.status==="offen"&&!n.gelesen&&!n.typ);
+    if(offene.length>0 && nachrichten.length>prevNachrichtenCount.current){
+      const neu=offene[0];
+      sendNotification(`📅 Neuer Urlaubsantrag von ${neu.von}`, `${neu.tage.length} Tage`);
+    }
+    prevNachrichtenCount.current=nachrichten.length;
+  },[nachrichten,istAdmin,notifErlaubt]);
+
+  useEffect(()=>{
+    let pollCount=0;
+    const poll=()=>{
+      pollCount++;
+      if(window.__firebase){
+        window.__firebase.listen(data=>{
+          latestData.current=data;
+          setTageAlleRaw(data.tageAlle||{});
+          setNachrichtenRaw(Array.isArray(data.nachrichten)?data.nachrichten:Object.values(data.nachrichten||{}));
+          setPasswoerterRaw(data.passwoerter||{});
+          setLaden(false);
+        });
+      } else if(pollCount<50){ setTimeout(poll,200); }
+      else { setFbFehler(true); setLaden(false); }
+    };
+    poll();
+  },[]);
+
+  const speichern=useCallback((t,n,p)=>{
+    clearTimeout(saveTimer.current);
+    saveTimer.current=setTimeout(()=>{
+      if(!window.__firebase) return;
+      window.__firebase.save({tageAlle:t,nachrichten:n,passwoerter:p})
+        .then(()=>{setSpeicherStatus("ok");setTimeout(()=>setSpeicherStatus(null),2000);})
+        .catch(()=>setSpeicherStatus("fehler"));
+    },500);
+  },[]);
+
+  const setTageAlle=useCallback(upd=>{ setTageAlleRaw(prev=>{ const next=typeof upd==="function"?upd(prev):upd; latestData.current={...latestData.current,tageAlle:next}; speichern(next,latestData.current.nachrichten,latestData.current.passwoerter); return next; }); },[speichern]);
+  const setNachrichten=useCallback(upd=>{ setNachrichtenRaw(prev=>{ const next=typeof upd==="function"?upd(prev):upd; latestData.current={...latestData.current,nachrichten:next}; speichern(latestData.current.tageAlle,next,latestData.current.passwoerter); return next; }); },[speichern]);
+  const setPasswoerter=useCallback(upd=>{ setPasswoerterRaw(prev=>{ const next=typeof upd==="function"?upd(prev):upd; latestData.current={...latestData.current,passwoerter:next}; speichern(latestData.current.tageAlle,latestData.current.nachrichten,next); return next; }); },[speichern]);
+
+  const handleMouseDown=(key)=>{ const {year:y,month:m,day:d}=parseKey(key); if(isWeekend(y,m,d)||genTage.has(key)||feiertage[key]) return; isDragging.current=false; dragStartKey.current=key; dragCurrentKey.current=key; setDragRange(new Set([key])); };
+  const handleMouseEnter=(key)=>{ if(!dragStartKey.current) return; if(key!==dragCurrentKey.current){isDragging.current=true;dragCurrentKey.current=key;setDragRange(getRange(dragStartKey.current,key));} };
+  const handleMouseUp=(key)=>{
+    if(!dragStartKey.current) return;
+    const start=dragStartKey.current;
+    if(isDragging.current){
+      const range=getRange(start,key),neueTage=new Set();
+      setTageAlle(prev=>{ const next={...prev}; range.forEach(k=>{ const {year:y,month:m,day:d}=parseKey(k); if(isWeekend(y,m,d)||feiertage[k]) return; const v=next[k]||[]; if(!v.includes(name)){next[k]=[...v,name];neueTage.add(k);} }); return next; });
+      setPendingTage(prev=>new Set([...prev,...neueTage]));
+    } else { toggleTag(start); }
+    dragStartKey.current=null;dragCurrentKey.current=null;isDragging.current=false;setDragRange(new Set());
+  };
+  const handleGlobalMouseUp=()=>{ if(dragStartKey.current){dragStartKey.current=null;dragCurrentKey.current=null;isDragging.current=false;setDragRange(new Set());} };
+  const handleTouchStart=(key,e)=>{ e.preventDefault(); const {year:y,month:m,day:d}=parseKey(key); if(isWeekend(y,m,d)||genTage.has(key)||feiertage[key]) return; touchStartKey.current=key; touchMoved.current=false; dragStartKey.current=key; dragCurrentKey.current=key; setDragRange(new Set([key])); };
+  const handleTouchMove=(e)=>{ e.preventDefault(); if(!dragStartKey.current) return; const touch=e.touches[0]; const el=document.elementFromPoint(touch.clientX,touch.clientY); if(el&&el.dataset.daykey){ const key=el.dataset.daykey; if(key!==dragCurrentKey.current){ touchMoved.current=true; isDragging.current=true; dragCurrentKey.current=key; setDragRange(getRange(dragStartKey.current,key)); } } };
+  const handleTouchEnd=(key,e)=>{
+    e.preventDefault(); if(!dragStartKey.current) return; const start=dragStartKey.current;
+    if(isDragging.current){
+      const range=getRange(start,dragCurrentKey.current),neueTage=new Set();
+      setTageAlle(prev=>{ const next={...prev}; range.forEach(k=>{ const {year:y,month:m,day:d}=parseKey(k); if(isWeekend(y,m,d)||feiertage[k]) return; const v=next[k]||[]; if(!v.includes(name)){next[k]=[...v,name];neueTage.add(k);} }); return next; });
+      setPendingTage(prev=>new Set([...prev,...neueTage]));
+    } else { toggleTag(start); }
+    dragStartKey.current=null;dragCurrentKey.current=null;isDragging.current=false;touchMoved.current=false;setDragRange(new Set());
+  };
+  const toggleTag=(key)=>{ const {year:y,month:m,day:d}=parseKey(key); if(isWeekend(y,m,d)||feiertage[key]) return; const v=tageAlle[key]||[]; if(v.includes(name)){ if(genTage.has(key)) return; setTageAlle(prev=>{const next={...prev},neu=(next[key]||[]).filter(n=>n!==name);if(neu.length===0)delete next[key];else next[key]=neu;return next;}); setPendingTage(prev=>{const s=new Set(prev);s.delete(key);return s;}); } else { setTageAlle(prev=>({...prev,[key]:[...(prev[key]||[]),name]})); setPendingTage(prev=>new Set([...prev,key])); } };
+
+  const handleEinreichen=()=>{
+    if(pendingTage.size===0) return;
+    const sortiert=[...pendingTage].filter(k=>parseKey(k).year===year).sort();
+    setNachrichten(prev=>[{id:Date.now(),von:name,tage:sortiert,datum:new Date().toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}),gelesen:false,status:"offen"},...prev]);
+    setPendingTage(new Set());
+  };
+
+  const handleStatus=(id,status,grund="")=>{
+    const antrag=nachrichten.find(n=>n.id===id);
+    if(status==="abgelehnt"&&antrag){
+      setTageAlle(prev=>{ const next={...prev}; antrag.tage.forEach(k=>{ if(next[k]){ const neu=next[k].filter(n=>n!==antrag.von); if(neu.length===0) delete next[k]; else next[k]=neu; } }); return next; });
+      const ben={id:Date.now()+1,typ:"ablehnung",fuer:antrag.von,von:ADMIN,tage:antrag.tage,grund:grund||"",datum:new Date().toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"}),gelesen:false,status:"info"};
+      setNachrichten(prev=>[ben,...prev.map(n=>n.id===id?{...n,status:"abgelehnt",gelesen:false,grund}:n)]);
+    } else {
+      setNachrichten(prev=>prev.map(n=>n.id===id?{...n,status,gelesen:false}:n));
+    }
+  };
+  const handleGelesen=(id)=>setNachrichten(prev=>prev.map(n=>n.id===id?{...n,gelesen:true}:n));
+
+  if(laden) return(<div style={{minHeight:"100vh",background:"#111111",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",color:"#666666",fontSize:"16px"}}>⏳ Verbinde...</div>);
+  if(fbFehler) return(<div style={{minHeight:"100vh",background:"#111111",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",fontFamily:"'Inter',system-ui,sans-serif",padding:"32px",textAlign:"center",color:"#EF4444",fontSize:"18px",fontWeight:700}}>⚠️ Firebase nicht verbunden</div>);
+  if(!name) return <NamensAuswahl onSelect={(n,istStd)=>{setName(n);if(istStd)setMussPasswortAendern(true);}} nachrichten={nachrichten} passwoerter={passwoerter} onReset={()=>{setTageAlle({});setNachrichten([]);setPasswoerter({}); }}/>;
+  if(mussPasswortAendern) return <PasswortAendern name={name} farbe={farbe} onSave={pw=>{setPasswoerter(p=>({...p,[name]:pw}));setMussPasswortAendern(false);}}/>;
+
+  const InboxModal=()=>(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300}} onClick={()=>setShowInbox(false)}>
+      <div style={{background:"#1A1A1A",borderRadius:"18px",border:"1px solid #2E2E2E",width:"100%",maxWidth:"520px",maxHeight:"80vh",display:"flex",flexDirection:"column",boxShadow:"0 30px 80px rgba(0,0,0,0.7)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{padding:"20px 24px",borderBottom:"1px solid #2A2A2A",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+          <div>
+            <div style={{fontSize:"16px",fontWeight:800,color:"#FFFFFF"}}>{istAdmin?"📬 Urlaubsanträge":"📬 Postfach"}</div>
+            <div style={{fontSize:"12px",color:"#666666"}}>{istAdmin?"Alle Anträge — auch entschiedene":"Deine Anträge & Benachrichtigungen"}</div>
+          </div>
+          <button onClick={()=>setShowInbox(false)} style={{background:"#2A2A2A",border:"none",color:"#888888",fontSize:"18px",cursor:"pointer",borderRadius:"8px",width:"32px",height:"32px"}}>✕</button>
+        </div>
+        <div style={{overflowY:"auto",flex:1}}>
+          {(()=>{
+            const sichtbar=istAdmin
+              ? nachrichten.filter(n=>!n.typ)
+              : nachrichten.filter(n=>(n.von===name&&!n.typ)||(n.typ==="ablehnung"&&n.fuer===name));
+            if(sichtbar.length===0) return <div style={{padding:"48px",textAlign:"center",color:"#555555"}}>Keine Nachrichten</div>;
+            return sichtbar.map(n=>{
+              if(n.typ==="ablehnung") return(
+                <div key={n.id} onClick={()=>handleGelesen(n.id)} style={{padding:"16px 24px",borderBottom:"1px solid #222222",background:!n.gelesen?"#1C1C1C":"transparent",cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:"12px"}}>
+                    <div style={{width:"36px",height:"36px",borderRadius:"50%",background:"rgba(239,68,68,0.15)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"18px",flexShrink:0,position:"relative"}}>
+                      ✕{!n.gelesen&&<div style={{position:"absolute",top:0,right:0,width:"10px",height:"10px",borderRadius:"50%",background:"#EF4444",border:"2px solid #1A1A1A"}}/>}
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px",flexWrap:"wrap"}}>
+                        <span style={{fontSize:"14px",fontWeight:700,color:"#EF4444"}}>Antrag abgelehnt</span>
+                        <span style={{fontSize:"11px",color:"#555555"}}>{n.datum}</span>
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:n.grund?"10px":"0"}}>
+                        {n.tage.map(k=><span key={k} style={{fontSize:"11px",background:"rgba(239,68,68,0.12)",color:"#EF4444",padding:"2px 8px",borderRadius:"6px",fontWeight:600}}>{formatDate(k)}</span>)}
+                      </div>
+                      {n.grund&&<div style={{background:"#222222",borderRadius:"8px",padding:"10px 12px",borderLeft:"3px solid #EF4444",marginTop:"8px"}}><div style={{fontSize:"11px",color:"#666666",marginBottom:"3px",fontWeight:600}}>Begründung:</div><div style={{fontSize:"12px",color:"#CCCCCC"}}>{n.grund}</div></div>}
+                    </div>
+                  </div>
+                </div>
+              );
+              const f=FARBEN[n.von],sF=n.status==="genehmigt"?"#10B981":n.status==="abgelehnt"?"#EF4444":"#F59E0B";
+              const sL=n.status==="genehmigt"?"✓ Genehmigt":n.status==="abgelehnt"?"✕ Abgelehnt":"⏳ Offen";
+              return(
+                <div key={n.id} onClick={()=>handleGelesen(n.id)} style={{padding:"16px 24px",borderBottom:"1px solid #222222",background:!n.gelesen?"#1C1C1C":"transparent",cursor:"pointer"}}>
+                  <div style={{display:"flex",alignItems:"flex-start",gap:"12px"}}>
+                    <div style={{width:"36px",height:"36px",borderRadius:"50%",background:f+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",fontWeight:800,color:f,flexShrink:0,position:"relative"}}>
+                      {n.von[0]}{!n.gelesen&&<div style={{position:"absolute",top:0,right:0,width:"10px",height:"10px",borderRadius:"50%",background:"#EF4444",border:"2px solid #1A1A1A"}}/>}
+                    </div>
+                    <div style={{flex:1}}>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"4px",flexWrap:"wrap"}}>
+                        <span style={{fontSize:"14px",fontWeight:700,color:f}}>{n.von}</span>
+                        <span style={{fontSize:"11px",color:"#555555"}}>{n.datum}</span>
+                        <span style={{fontSize:"11px",fontWeight:700,color:sF,background:sF+"18",padding:"2px 8px",borderRadius:"99px"}}>{sL}</span>
+                      </div>
+                      <div style={{display:"flex",flexWrap:"wrap",gap:"4px",marginBottom:istAdmin&&n.status==="offen"?"12px":"0"}}>
+                        {n.tage.map(k=><span key={k} style={{fontSize:"11px",background:f+"18",color:f,padding:"2px 8px",borderRadius:"6px",fontWeight:600}}>{formatDate(k)}</span>)}
+                      </div>
+                      {istAdmin&&n.status==="offen"&&(
+                        <div style={{display:"flex",gap:"8px",marginTop:"10px"}}>
+                          <button onClick={e=>{e.stopPropagation();handleStatus(n.id,"genehmigt");}} style={{padding:"6px 16px",borderRadius:"8px",border:"1px solid #10B98155",background:"rgba(16,185,129,0.12)",color:"#10B981",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>✓ Genehmigen</button>
+                          <button onClick={e=>{e.stopPropagation();setAblehnModal({id:n.id,von:n.von,tage:n.tage});}} style={{padding:"6px 16px",borderRadius:"8px",border:"1px solid #EF444455",background:"rgba(239,68,68,0.12)",color:"#EF4444",fontSize:"12px",fontWeight:700,cursor:"pointer"}}>✕ Ablehnen</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              );
+            });
+          })()}
+        </div>
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{minHeight:"100vh",background:"#111111",fontFamily:"'Inter',system-ui,sans-serif",color:"#EEEEEE",userSelect:"none"}} onMouseUp={handleGlobalMouseUp} onTouchMove={handleTouchMove}>
+      <div style={{background:"#1A1A1A",borderBottom:"1px solid #2E2E2E",padding:"14px 24px",display:"flex",flexWrap:"wrap",gap:"12px",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:"12px"}}>
+          <button onClick={()=>{setName(null);setMussPasswortAendern(false);}} style={{width:"36px",height:"36px",borderRadius:"10px",background:"#222222",border:"1px solid #333333",color:"#888888",fontSize:"18px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>🏠</button>
+          <div>
+            <div style={{fontSize:"18px",fontWeight:800,color:"#FFFFFF"}}>📅 Urlaubsplaner</div>
+            <div style={{fontSize:"12px",color:"#666666"}}><span style={{color:farbe,fontWeight:700}}>{name}</span>{istAdmin&&<span style={{marginLeft:"6px",fontSize:"10px",background:"rgba(59,130,246,0.2)",color:"#AAAAAA",padding:"1px 7px",borderRadius:"99px"}}>Admin</span>}{speicherStatus==="ok"&&<span style={{marginLeft:"10px",fontSize:"11px",color:"#10B981"}}>✓ Gespeichert</span>}</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+          <button onClick={()=>setYear(y=>y-1)} style={BtnStyle}>‹</button>
+          <span style={{fontSize:"20px",fontWeight:700,color:"#FFFFFF",minWidth:"52px",textAlign:"center"}}>{year}</span>
+          <button onClick={()=>setYear(y=>y+1)} style={BtnStyle}>›</button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
+          <button onClick={()=>setZeigeFeiert(z=>!z)} style={{padding:"7px 12px",borderRadius:"9px",background:zeigeFeiert?"rgba(155,28,28,0.15)":"#222222",border:zeigeFeiert?"1px solid rgba(155,28,28,0.35)":"1px solid #333333",color:zeigeFeiert?"#9B1C1C":"#666666",fontSize:"12px",fontWeight:600,cursor:"pointer"}}>Feiertage {zeigeFeiert?"an":"aus"}</button>
+          {istAdmin&&<button onClick={()=>requestNotificationPermission().then(ok=>setNotifErlaubt(ok))} style={{padding:"7px 12px",borderRadius:"9px",background:notifErlaubt?"rgba(16,185,129,0.12)":"#222222",border:notifErlaubt?"1px solid rgba(16,185,129,0.3)":"1px solid #333333",color:notifErlaubt?"#10B981":"#666666",fontSize:"12px",fontWeight:600,cursor:"pointer"}}>🔔 {notifErlaubt?"Benachrichtigungen an":"Benachrichtigungen"}</button>}
+          <button onClick={()=>setShowInbox(true)} style={{padding:"7px 14px",borderRadius:"9px",background:ungelesen>0?"rgba(239,68,68,0.15)":"#222222",border:ungelesen>0?"1px solid rgba(239,68,68,0.35)":"1px solid #333333",color:ungelesen>0?"#EF4444":"#888888",fontSize:"13px",fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",gap:"6px"}}>
+            📬{ungelesen>0&&<span style={{background:"#EF4444",color:"#fff",borderRadius:"99px",fontSize:"10px",fontWeight:800,padding:"1px 6px"}}>{ungelesen}</span>}
+            {istAdmin?" Anträge":" Postfach"}
+          </button>
+          <div style={{display:"flex",background:"#222222",borderRadius:"10px",padding:"3px"}}>
+            {["kalender","statistik"].map(v=>(
+              <button key={v} onClick={()=>setView(v)} style={{padding:"6px 14px",borderRadius:"7px",border:"none",cursor:"pointer",background:view===v?farbe:"transparent",color:view===v?"#fff":"#888888",fontSize:"13px",fontWeight:600}}>
+                {v==="kalender"?"📆 Kalender":"📊 Übersicht"}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{padding:"9px 24px",background:"#161616",borderBottom:"1px solid #2A2A2A",display:"flex",alignItems:"center",gap:"16px",flexWrap:"wrap"}}>
+        {NAMEN.map(n=>(<div key={n} style={{display:"flex",alignItems:"center",gap:"5px"}}><div style={{width:"10px",height:"10px",borderRadius:"3px",background:FARBEN[n],opacity:n===name?1:0.5}}/><span style={{fontSize:"11px",fontWeight:n===name?700:400,color:n===name?FARBEN[n]:"#555555"}}>{n}</span></div>))}
+        {zeigeFeiert&&<div style={{display:"flex",alignItems:"center",gap:"5px",borderLeft:"1px solid #2A2A2A",paddingLeft:"12px"}}><div style={{width:"10px",height:"10px",borderRadius:"3px",background:"#9B1C1C44"}}/><span style={{fontSize:"11px",color:"#9B1C1C"}}>Feiertag</span></div>}
+        <div style={{display:"flex",alignItems:"center",gap:"5px"}}><div style={{width:"10px",height:"10px",borderRadius:"3px",border:`1.5px dashed ${farbe}`}}/><span style={{fontSize:"11px",color:"#555555"}}>Ausstehend</span></div>
+        <div style={{display:"flex",alignItems:"center",gap:"5px"}}><div style={{width:"10px",height:"10px",borderRadius:"3px",border:`1.5px solid ${farbe}`,background:farbe+"30"}}/><span style={{fontSize:"11px",color:"#555555"}}>Genehmigt</span></div>
+        {pendingTage.size>0&&(
+          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"10px"}}>
+            <span style={{fontSize:"12px",color:"#F59E0B",fontWeight:600}}>⚠ {pendingTage.size} nicht eingereicht</span>
+            <button onClick={handleEinreichen} style={{padding:"7px 16px",borderRadius:"9px",background:`linear-gradient(135deg,${farbe},${farbe}cc)`,border:"none",color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer"}}>📤 Einreichen</button>
+          </div>
+        )}
+      </div>
+
+      <div style={{padding:"20px 24px"}}>
+        {view==="kalender"?(
+          <>
+            <div style={{background:"#1A1A1A",border:"1px solid #2E2E2E",borderRadius:"14px",padding:"14px 20px",marginBottom:"20px",display:"flex",alignItems:"center",gap:"24px",flexWrap:"wrap"}}>
+              <div><div style={{fontSize:"11px",color:"#666666",fontWeight:700,textTransform:"uppercase",letterSpacing:"0.06em"}}>Genehmigte Urlaubstage {year}</div><div style={{fontSize:"32px",fontWeight:800,color:farbe}}>{meineGen}<span style={{fontSize:"14px",color:"#666666",fontWeight:400}}> Tage</span></div></div>
+              {[...eingNichtGen].filter(k=>parseKey(k).year===year).length>0&&(<div style={{background:"rgba(245,158,11,0.1)",border:"1px solid rgba(245,158,11,0.3)",borderRadius:"10px",padding:"10px 16px"}}><div style={{fontSize:"11px",color:"#F59E0B",fontWeight:700,textTransform:"uppercase"}}>Wartet auf Genehmigung</div><div style={{fontSize:"22px",fontWeight:800,color:"#F59E0B"}}>{[...eingNichtGen].filter(k=>parseKey(k).year===year).length}<span style={{fontSize:"13px",color:"#92400E",fontWeight:400}}> Tage</span></div></div>)}
+              {pendingTage.size>0&&(<div style={{background:"#1E1E1E",border:"1px solid #333333",borderRadius:"10px",padding:"10px 16px"}}><div style={{fontSize:"11px",color:"#666666",fontWeight:700,textTransform:"uppercase"}}>Nicht eingereicht</div><div style={{fontSize:"22px",fontWeight:800,color:"#888888"}}>{pendingTage.size}<span style={{fontSize:"13px",color:"#666666",fontWeight:400}}> Tage</span></div></div>)}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(270px,1fr))",gap:"14px"}}>
+              {MONATE.map((monat,mIdx)=>{
+                const days=getDaysInMonth(year,mIdx),fd=getFirstDow(year,mIdx);
+                return(<div key={mIdx} style={{background:"#1A1A1A",border:"1px solid #2E2E2E",borderRadius:"13px",padding:"13px"}}>
+                  <div style={{fontSize:"13px",fontWeight:700,color:"#DDDDDD",marginBottom:"8px"}}>{monat} {year}</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px",marginBottom:"3px"}}>
+                    {WOCHENTAGE.map(w=><div key={w} style={{textAlign:"center",fontSize:"9px",color:"#444444",fontWeight:700}}>{w}</div>)}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px"}}>
+                    {Array.from({length:fd},(_,i)=><div key={`e${i}`}/>)}
+                    {Array.from({length:days},(_,i)=>{
+                      const d=i+1,k=dateKey(year,mIdx,d),we=isWeekend(year,mIdx,d);
+                      const wer=tageAlle[k]||[],ich=wer.includes(name);
+                      const istFeiertag=zeigeFeiert&&feiertage[k];
+                      const isPend=pendingTage.has(k),isEing=eingNichtGen.has(k),isGen=genTage.has(k);
+                      const inDrag=dragRange.has(k)&&!we&&!istFeiertag,isToday=k===today;
+                      const mehrere=wer.length>1;
+                      const gesperrt=we||istFeiertag||(ich&&isGen);
+
+                      const ausstehendePers=wer.filter(n=>{
+                        const eNG=new Set(nachrichten.filter(msg=>msg.von===n&&msg.status==="offen"&&!msg.typ).flatMap(msg=>msg.tage));
+                        return eNG.has(k)&&(istAdmin||n===name);
+                      });
+                      const sollPulsieren=ausstehendePers.length>0;
+                      const pulseColor=ausstehendePers.length>0?FARBEN[ausstehendePers[0]]:FARBEN[wer[0]]||"#94A3B8";
+
+                      // Genehmigte Personen an diesem Tag berechnen
+                      const genPersonen = wer.filter(n=>{
+                        const gN=new Set(nachrichten.filter(msg=>msg.von===n&&msg.status==="genehmigt"&&!msg.typ).flatMap(msg=>msg.tage));
+                        return gN.has(k);
+                      });
+                      const anzGen = genPersonen.length;
+
+                      // Hintergrund: bei mehreren genehmigten Personen geteilter Hintergrund
+                      const getBg=()=>{
+                        if(istFeiertag) return "#4A0000";
+                        if(inDrag) return farbe+"44";
+                        if(wer.length===0) return "transparent";
+                        // Eigene ausstehende Tage: schwache Farbe
+                        if(wer.length===1&&wer[0]===name){
+                          if(isPend||isEing) return FARBEN[name]+"28";
+                          if(isGen) return FARBEN[name]+"CC";
+                        }
+                        // Mehrere genehmigte Personen: geteilter Hintergrund
+                        if(anzGen>=2){
+                          const pct=100/anzGen;
+                          const stops=genPersonen.map((n,i)=>`${FARBEN[n]}CC ${i*pct}% ${(i+1)*pct}%`).join(", ");
+                          return `linear-gradient(to right, ${stops})`;
+                        }
+                        // Genau eine genehmigte Person
+                        if(anzGen===1) return FARBEN[genPersonen[0]]+"CC";
+                        // Nur ausstehende (keine genehmigten)
+                        if(wer.length===1) return FARBEN[wer[0]]+"28";
+                        return "#2A2A2A";
+                      };
+
+                      const getBorder=()=>{
+                        if(istFeiertag) return "2px solid #8B0000";
+                        if(inDrag) return `2px dashed ${farbe}`;
+                        if(ich){ if(isPend) return `2px dashed ${farbe}`; if(isEing) return "2px solid transparent"; if(isGen) return `2px solid ${farbe}`; }
+                        if(anzGen>=2) return "2px solid rgba(255,255,255,0.15)";
+                        if(mehrere) return `2px solid ${FARBEN[wer[0]]}99`;
+                        return "1.5px solid transparent";
+                      };
+
+                      const getColor=()=>{
+                        if(we) return "#333333";
+                        if(istFeiertag) return "#FFAAAA";
+                        if(ich&&(isPend||isEing)) return farbe;
+                        if(wer.length>=1) return "#FFFFFF";
+                        if(isToday) return "#CCCCCC";
+                        return "#666666";
+                      };
+
+                      const balkenHoehe=anzGen>1?"5px":"3px";
+
+                      return(<div key={k} data-daykey={k}
+                        onMouseDown={()=>!gesperrt&&handleMouseDown(k)} onMouseEnter={()=>handleMouseEnter(k)} onMouseUp={()=>!gesperrt&&handleMouseUp(k)}
+                        onTouchStart={e=>!gesperrt&&handleTouchStart(k,e)} onTouchEnd={e=>!gesperrt&&handleTouchEnd(k,e)}
+                        title={istFeiertag?feiertage[k]:wer.length>0?wer.join(", "):""}
+                        className={sollPulsieren?"pulsing":""}
+                        style={{"--pulse-color":pulseColor+"CC",aspectRatio:"1",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",borderRadius:"5px",fontSize:"11px",fontWeight:700,cursor:gesperrt?"default":"pointer",background:getBg(),color:getColor(),border:getBorder(),position:"relative",WebkitTapHighlightColor:"transparent",textShadow:(wer.length>0||istFeiertag)&&!we?"0 1px 4px rgba(0,0,0,0.9)":"none"}}>
+                        {d}
+                        {isToday&&wer.length===0&&!istFeiertag&&<div style={{position:"absolute",bottom:0,left:"4px",right:"4px",height:"3px",borderRadius:"2px",background:"#3B82F6"}}/>}
+                        {/* Farbbalken unten - nur bei genehmigten Tagen */}
+                        {!we&&(inDrag||istFeiertag||anzGen>0)&&(
+                          <div style={{position:"absolute",bottom:0,left:0,right:0,height:balkenHoehe,borderRadius:"0 0 4px 4px",display:"flex",overflow:"hidden",gap:"1px"}}>
+                            {istFeiertag
+                              ? <div style={{flex:1,background:"#CC0000"}}/>
+                              : inDrag&&!ich
+                                ? <div style={{flex:1,background:farbe}}/>
+                                : genPersonen.map(n=><div key={n} style={{flex:1,background:FARBEN[n]}}/>)
+                            }
+                          </div>
+                        )}
+                      </div>);
+                    })}
+                  </div>
+                </div>);
+              })}
+            </div>
+          </>
+        ):(
+          <div style={{maxWidth:"680px",margin:"0 auto"}}>
+            <div style={{background:"#1A1A1A",border:"1px solid #2E2E2E",borderRadius:"14px",overflow:"hidden"}}>
+              <div style={{padding:"16px 22px",borderBottom:"1px solid #2A2A2A",fontSize:"15px",fontWeight:700,color:"#FFFFFF"}}>Urlaubsübersicht {year}</div>
+              {NAMEN.map(n=>{ const gen=new Set(nachrichten.filter(m=>m.von===n&&m.status==="genehmigt"&&!m.typ).flatMap(m=>m.tage)); const count=Object.entries(tageAlle).filter(([k,v])=>parseKey(k).year===year&&v.includes(n)&&gen.has(k)).length; const f=FARBEN[n],istIch=n===name;
+                return(<div key={n} style={{display:"flex",alignItems:"center",gap:"14px",padding:"12px 22px",borderBottom:"1px solid #222222",background:istIch?f+"08":"transparent"}}>
+                  <div style={{width:"32px",height:"32px",borderRadius:"50%",background:f+"22",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",fontWeight:800,color:f,flexShrink:0}}>{n[0]}</div>
+                  <div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:istIch?700:600,color:istIch?f:"#CCCCCC",marginBottom:"4px"}}>{n}{istIch&&<span style={{fontSize:"10px",background:f+"22",color:f,padding:"1px 6px",borderRadius:"99px",marginLeft:"4px"}}>Du</span>}</div><div style={{height:"5px",background:"#222222",borderRadius:"99px",overflow:"hidden"}}><div style={{height:"100%",width:count>0?`${Math.min(100,count*3)}%`:"0%",background:f,borderRadius:"99px",transition:"width 0.4s"}}/></div></div>
+                  <div style={{fontSize:"20px",fontWeight:800,color:count>0?f:"#333333",minWidth:"28px",textAlign:"right"}}>{count}</div>
+                  <div style={{fontSize:"11px",color:"#555555"}}>Tage</div>
+                </div>);
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+      {showInbox&&<InboxModal/>}
+      <AblehnModalKomponente modal={ablehnModal} onAbbrechen={()=>setAblehnModal(null)} onBestaetigen={(id,grund)=>{handleStatus(id,"abgelehnt",grund);setAblehnModal(null);}}/>
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<App/>);
+
+
+</script>
+</body>
+</html>
